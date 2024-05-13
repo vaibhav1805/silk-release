@@ -174,6 +174,19 @@ type IPTablesAdapter struct {
 	newChainReturnsOnCall map[int]struct {
 		result1 error
 	}
+	RenameChainStub        func(string, string, string) error
+	renameChainMutex       sync.RWMutex
+	renameChainArgsForCall []struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}
+	renameChainReturns struct {
+		result1 error
+	}
+	renameChainReturnsOnCall map[int]struct {
+		result1 error
+	}
 	RuleCountStub        func(string) (int, error)
 	ruleCountMutex       sync.RWMutex
 	ruleCountArgsForCall []struct {
@@ -1010,6 +1023,69 @@ func (fake *IPTablesAdapter) NewChainReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *IPTablesAdapter) RenameChain(arg1 string, arg2 string, arg3 string) error {
+	fake.renameChainMutex.Lock()
+	ret, specificReturn := fake.renameChainReturnsOnCall[len(fake.renameChainArgsForCall)]
+	fake.renameChainArgsForCall = append(fake.renameChainArgsForCall, struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RenameChainStub
+	fakeReturns := fake.renameChainReturns
+	fake.recordInvocation("RenameChain", []interface{}{arg1, arg2, arg3})
+	fake.renameChainMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *IPTablesAdapter) RenameChainCallCount() int {
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
+	return len(fake.renameChainArgsForCall)
+}
+
+func (fake *IPTablesAdapter) RenameChainCalls(stub func(string, string, string) error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = stub
+}
+
+func (fake *IPTablesAdapter) RenameChainArgsForCall(i int) (string, string, string) {
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
+	argsForCall := fake.renameChainArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *IPTablesAdapter) RenameChainReturns(result1 error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = nil
+	fake.renameChainReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *IPTablesAdapter) RenameChainReturnsOnCall(i int, result1 error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = nil
+	if fake.renameChainReturnsOnCall == nil {
+		fake.renameChainReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.renameChainReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *IPTablesAdapter) RuleCount(arg1 string) (int, error) {
 	fake.ruleCountMutex.Lock()
 	ret, specificReturn := fake.ruleCountReturnsOnCall[len(fake.ruleCountArgsForCall)]
@@ -1103,6 +1179,8 @@ func (fake *IPTablesAdapter) Invocations() map[string][][]interface{} {
 	defer fake.listChainsMutex.RUnlock()
 	fake.newChainMutex.RLock()
 	defer fake.newChainMutex.RUnlock()
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
 	fake.ruleCountMutex.RLock()
 	defer fake.ruleCountMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}

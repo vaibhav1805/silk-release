@@ -124,6 +124,19 @@ type IPTables struct {
 	newChainReturnsOnCall map[int]struct {
 		result1 error
 	}
+	RenameChainStub        func(string, string, string) error
+	renameChainMutex       sync.RWMutex
+	renameChainArgsForCall []struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}
+	renameChainReturns struct {
+		result1 error
+	}
+	renameChainReturnsOnCall map[int]struct {
+		result1 error
+	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
 }
@@ -699,6 +712,69 @@ func (fake *IPTables) NewChainReturnsOnCall(i int, result1 error) {
 	}{result1}
 }
 
+func (fake *IPTables) RenameChain(arg1 string, arg2 string, arg3 string) error {
+	fake.renameChainMutex.Lock()
+	ret, specificReturn := fake.renameChainReturnsOnCall[len(fake.renameChainArgsForCall)]
+	fake.renameChainArgsForCall = append(fake.renameChainArgsForCall, struct {
+		arg1 string
+		arg2 string
+		arg3 string
+	}{arg1, arg2, arg3})
+	stub := fake.RenameChainStub
+	fakeReturns := fake.renameChainReturns
+	fake.recordInvocation("RenameChain", []interface{}{arg1, arg2, arg3})
+	fake.renameChainMutex.Unlock()
+	if stub != nil {
+		return stub(arg1, arg2, arg3)
+	}
+	if specificReturn {
+		return ret.result1
+	}
+	return fakeReturns.result1
+}
+
+func (fake *IPTables) RenameChainCallCount() int {
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
+	return len(fake.renameChainArgsForCall)
+}
+
+func (fake *IPTables) RenameChainCalls(stub func(string, string, string) error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = stub
+}
+
+func (fake *IPTables) RenameChainArgsForCall(i int) (string, string, string) {
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
+	argsForCall := fake.renameChainArgsForCall[i]
+	return argsForCall.arg1, argsForCall.arg2, argsForCall.arg3
+}
+
+func (fake *IPTables) RenameChainReturns(result1 error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = nil
+	fake.renameChainReturns = struct {
+		result1 error
+	}{result1}
+}
+
+func (fake *IPTables) RenameChainReturnsOnCall(i int, result1 error) {
+	fake.renameChainMutex.Lock()
+	defer fake.renameChainMutex.Unlock()
+	fake.RenameChainStub = nil
+	if fake.renameChainReturnsOnCall == nil {
+		fake.renameChainReturnsOnCall = make(map[int]struct {
+			result1 error
+		})
+	}
+	fake.renameChainReturnsOnCall[i] = struct {
+		result1 error
+	}{result1}
+}
+
 func (fake *IPTables) Invocations() map[string][][]interface{} {
 	fake.invocationsMutex.RLock()
 	defer fake.invocationsMutex.RUnlock()
@@ -720,6 +796,8 @@ func (fake *IPTables) Invocations() map[string][][]interface{} {
 	defer fake.listChainsMutex.RUnlock()
 	fake.newChainMutex.RLock()
 	defer fake.newChainMutex.RUnlock()
+	fake.renameChainMutex.RLock()
+	defer fake.renameChainMutex.RUnlock()
 	copiedInvocations := map[string][][]interface{}{}
 	for key, value := range fake.invocations {
 		copiedInvocations[key] = value

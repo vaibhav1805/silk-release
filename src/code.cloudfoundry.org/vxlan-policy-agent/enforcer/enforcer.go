@@ -136,62 +136,111 @@ func (e *Enforcer) EnforceRulesAndChain(rulesAndChain RulesWithChain) (string, e
 	return e.EnforceOnChain(rulesAndChain.Chain, rulesAndChain.Rules)
 }
 
-func (e *Enforcer) EnforceOnChain(c Chain, rules []rules.IPTablesRule) (string, error) {
-	var managedChainsRegex string
+func (e *Enforcer) EnforceOnChain(c Chain, rulesSpec []rules.IPTablesRule) (string, error) {
+	var managedChainsRegex, chainName string
+	var newTime int64
+	var logger lager.Logger
+
 	if c.ManagedChainsRegex != "" {
-		managedChainsRegex = c.ManagedChainsRegex
+		// used for ASGS
+		chainName = c.Prefix
+		candidateChainName := fmt.Sprintf("c%s", chainName)
+		logger = e.Logger.Session(chainName)
+
+		chainJumpExists, err := e.iptables.Exists(c.Table, c.ParentChain, rules.IPTablesRule{"-j", chainName})
+		if err != nil {
+			return "", err
+		}
+
+		candidateChainJumpExists, err := e.iptables.Exists(c.Table, c.ParentChain, rules.IPTablesRule{"-j", candidateChainName})
+		if err != nil {
+			return "", err
+		}
+		if candidateChainJumpExists && !chainJumpExists {
+			err = e.iptables.RenameChain(c.Table, candidateChainName, chainName)
+			if err != nil {
+				return "", err
+			}
+		}
+
+		err = e.cleanupOldChain(e.Logger, LiveChain{Table: c.Table, Name: candidateChainName}, c.ParentChain)
+		if err != nil {
+			return "", err
+		}
+
+		err = e.enforce(logger, c.Table, c.ParentChain, candidateChainName, rulesSpec...)
+		if err != nil {
+			return "", err
+		}
+
+		err = e.cleanupOldChain(e.Logger, LiveChain{Table: c.Table, Name: chainName}, c.ParentChain)
+		if err != nil {
+			return "", err
+		}
+
+		err = e.iptables.RenameChain(c.Table, candidateChainName, chainName)
+		if err != nil {
+			return "", err
+		}
 	} else {
-		managedChainsRegex = c.Prefix
+		// used for C2C
+		// time based managed prefix for cleanup
+		newTime = e.timestamper.CurrentTime()
+		chainName = fmt.Sprintf("%s%d", c.Prefix, newTime)
+		managedChainsRegex = c.Prefix + "([0-9]{10,16})"
+		logger = e.Logger.Session(chainName)
+		err := e.enforce(logger, c.Table, c.ParentChain, chainName, rulesSpec...)
+		if err != nil {
+			return "", err
+		}
+
+		logger.Debug("cleaning-up-old-rules", lager.Data{"chain": chainName, "table": c.Table, "rules": rulesSpec, "prefix": managedChainsRegex})
+		err = e.cleanupOldRules(logger, c.Table, c.ParentChain, managedChainsRegex, c.CleanUpParentChain, newTime)
+		if err != nil {
+			logger.Error("cleanup-rules", err)
+			return chainName, &CleanupErr{err}
+		}
 	}
-	return e.Enforce(c.Table, c.ParentChain, c.Prefix, managedChainsRegex, c.CleanUpParentChain, rules...)
+
+	return chainName, nil
+
 }
 
-func (e *Enforcer) Enforce(table, parentChain, chainPrefix, managedChainsRegex string, cleanupParentChain bool, rulespec ...rules.IPTablesRule) (string, error) {
-	newTime := e.timestamper.CurrentTime()
-	chain := fmt.Sprintf("%s%d", chainPrefix, newTime)
-	logger := e.Logger.Session(chain)
-
-	logger.Debug("create-chain", lager.Data{"chain": chain, "table": table})
-	err := e.iptables.NewChain(table, chain)
+func (e *Enforcer) enforce(logger lager.Logger, table string, parentChain string, chainName string, rulespec ...rules.IPTablesRule) error {
+	logger.Debug("create-chain", lager.Data{"chain": chainName, "table": table})
+	err := e.iptables.NewChain(table, chainName)
 	if err != nil {
 		logger.Error("create-chain", err)
-		return "", fmt.Errorf("creating chain: %s", err)
+		return fmt.Errorf("creating chain: %s", err)
 	}
 
 	if e.conf.DisableContainerNetworkPolicy {
 		rulespec = append([]rules.IPTablesRule{rules.NewAcceptEverythingRule(e.conf.OverlayNetwork)}, rulespec...)
 	}
 
-	logger.Debug("insert-chain", lager.Data{"chain": parentChain, "table": table, "index": 1, "rule": rules.IPTablesRule{"-j", chain}})
-	err = e.iptables.BulkInsert(table, parentChain, 1, rules.IPTablesRule{"-j", chain})
+	logger.Debug("insert-chain", lager.Data{"parent-chain": parentChain, "table": table, "index": 1, "rule": rules.IPTablesRule{"-j", chainName}})
+	err = e.iptables.BulkInsert(table, parentChain, 1, rules.IPTablesRule{"-j", chainName})
 	if err != nil {
 		logger.Error("insert-chain", err)
-		delErr := e.deleteChain(logger, LiveChain{Table: table, Name: chain})
+		delErr := e.deleteChain(logger, LiveChain{Table: table, Name: chainName})
 		if delErr != nil {
 			logger.Error("cleanup-failed-insert", delErr)
 		}
-		return "", fmt.Errorf("inserting chain: %s", err)
+		return fmt.Errorf("inserting chain: %s", err)
 	}
 
-	logger.Debug("bulk-append", lager.Data{"chain": chain, "table": table, "rules": rulespec})
-	err = e.iptables.BulkAppend(table, chain, rulespec...)
+	logger.Debug("bulk-append", lager.Data{"chain": chainName, "table": table, "rules": rulespec})
+	err = e.iptables.BulkAppend(table, chainName, rulespec...)
 	if err != nil {
 		logger.Error("bulk-append", err)
-		cleanErr := e.cleanupOldChain(logger, LiveChain{Table: table, Name: chain}, parentChain)
+		cleanErr := e.cleanupOldChain(logger, LiveChain{Table: table, Name: chainName}, parentChain)
 		if cleanErr != nil {
 			logger.Error("cleanup-failed-append", cleanErr)
 		}
-		return "", fmt.Errorf("bulk appending: %s", err)
+		return fmt.Errorf("bulk appending: %s", err)
 	}
 
-	logger.Debug("cleaning-up-old-rules", lager.Data{"chain": chain, "table": table, "rules": rulespec})
-	err = e.cleanupOldRules(logger, table, parentChain, managedChainsRegex, cleanupParentChain, newTime)
-	if err != nil {
-		logger.Error("cleanup-rules", err)
-		return chain, &CleanupErr{err}
-	}
-
-	return chain, nil
+	return nil
 }
 
 func (e *Enforcer) cleanupOldRules(logger lager.Logger, table, parentChain, managedChainsRegex string, cleanupParentChain bool, newTime int64) error {
@@ -200,7 +249,7 @@ func (e *Enforcer) cleanupOldRules(logger lager.Logger, table, parentChain, mana
 		return fmt.Errorf("listing forward rules: %s", err)
 	}
 
-	reManagedChain := regexp.MustCompile(managedChainsRegex + "([0-9]{10,16})")
+	reManagedChain := regexp.MustCompile(managedChainsRegex)
 
 	for _, r := range rulesList {
 		matches := reManagedChain.FindStringSubmatch(r)

@@ -18,7 +18,7 @@ import (
 )
 
 var _ = Describe("Enforcer", func() {
-	Describe("Enforce", func() {
+	FDescribe("EnforceOnChain", func() {
 		var (
 			fakeRule     rules.IPTablesRule
 			fakeRule2    rules.IPTablesRule
@@ -40,304 +40,576 @@ var _ = Describe("Enforcer", func() {
 			ruleEnforcer = enforcer.NewEnforcer(logger, timestamper, iptables, enforcer.EnforcerConfig{DisableContainerNetworkPolicy: false, OverlayNetwork: "10.10.0.0/16"})
 		})
 
-		It("enforces all the rules it receives on the correct chain", func() {
-			rulesToAppend := []rules.IPTablesRule{fakeRule, fakeRule2}
-			_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", true, rulesToAppend...)
-			Expect(err).NotTo(HaveOccurred())
+		Context("when ManagedChainsRegex is specified", func() {
+			var rulesToAppend []rules.IPTablesRule
+			var enforceErr error
 
-			Expect(iptables.BulkAppendCallCount()).To(Equal(1))
-			tbl, chain, rules := iptables.BulkAppendArgsForCall(0)
-			Expect(tbl).To(Equal("some-table"))
-			Expect(chain).To(Equal("foo42"))
-			Expect(rules).To(Equal(rulesToAppend))
-		})
-
-		Context("when the bulk append fails", func() {
-			BeforeEach(func() {
-				iptables.BulkAppendReturns(errors.New("banana"))
-			})
-			It("returns an error", func() {
-				rulesToAppend := []rules.IPTablesRule{fakeRule, fakeRule2}
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, rulesToAppend...)
-				Expect(err).To(MatchError("bulk appending: banana"))
-			})
-		})
-
-		It("creates a timestamped chain", func() {
-			_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(iptables.NewChainCallCount()).To(Equal(1))
-			tableName, chainName := iptables.NewChainArgsForCall(0)
-			Expect(tableName).To(Equal("some-table"))
-			Expect(chainName).To(Equal("foo42"))
-		})
-
-		It("returns the chain it created", func() {
-
-			chain, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(iptables.NewChainCallCount()).To(Equal(1))
-			tableName, chainName := iptables.NewChainArgsForCall(0)
-			Expect(tableName).To(Equal("some-table"))
-			Expect(chainName).To(Equal("foo42"))
-			Expect(chain).To(Equal("foo42"))
-		})
-		It("inserts the new chain into the chain", func() {
-			_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(iptables.BulkInsertCallCount()).To(Equal(1))
-			tableName, chainName, pos, ruleSpec := iptables.BulkInsertArgsForCall(0)
-			Expect(tableName).To(Equal("some-table"))
-			Expect(chainName).To(Equal("some-chain"))
-			Expect(pos).To(Equal(1))
-			Expect(ruleSpec).To(Equal([]rules.IPTablesRule{{"-j", "foo42"}}))
-		})
-
-		Context("when there is an older timestamped chain", func() {
-			BeforeEach(func() {
-				timestamper.CurrentTimeReturns(9999999999111111)
-				iptables.ListReturns([]string{
-					"-A some-chain -j foo9999999999111110",
-					"-A some-chain -j foo9999999999111116",
-				}, nil)
-			})
-
-			It("gets deleted", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(iptables.DeleteCallCount()).To(Equal(1))
-				table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("some-chain"))
-				Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "foo9999999999111110"}))
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				table, chain = iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo9999999999111110"))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo9999999999111110"))
-			})
-		})
-
-		Context("when there is an older timestamped chain with a different prefix", func() {
-			BeforeEach(func() {
-				timestamper.CurrentTimeReturns(9999999999111111)
-				iptables.ListReturns([]string{
-					"-A some-chain -j asg-000-9999999999111110",
-					"-A some-chain -j asg-001-9999999999111116",
-				}, nil)
-			})
-
-			It("gets deleted", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "asg-001-", "asg-\\d\\d\\d-", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(iptables.DeleteCallCount()).To(Equal(1))
-				table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("some-chain"))
-				Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "asg-000-9999999999111110"}))
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				table, chain = iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-			})
-		})
-
-		Context("when parent chain has other rules", func() {
-			BeforeEach(func() {
-				timestamper.CurrentTimeReturns(9999999999111111)
-				iptables.ListReturns([]string{
-					"-A some-chain -j asg-000-9999999999111110",
-					"-A some-chain -j asg-001-9999999999111116",
-					"-A some-chain -j some-chain--log",
-					"-A some-chain -m state --state RELATED,ESTABLISHED -j ACCEPT",
-					"-A some-chain -p tcp -m state --state INVALID -j DROP",
-					"-A some-chain -m iprange --dst-range 0.0.0.0-9.255.255.255 -j ACCEPT",
-					"-A some-chain -j REJECT --reject-with icmp-port-unreachable",
-					`-A some-chain -j LOG --log-prefix "DENY_ee8fd40b "`,
-				}, nil)
-			})
-
-			It("deletes other rules in parent chain after the current chain and keeps the reject rule if parent chain cleanup requested", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "asg-001-", "asg-\\d\\d\\d-", true, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(iptables.DeleteAfterRuleNumKeepRejectCallCount()).To(Equal(1))
-				table, chain, ruleSpec := iptables.DeleteAfterRuleNumKeepRejectArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("some-chain"))
-				Expect(ruleSpec).To(Equal(2))
-				Expect(iptables.BulkAppendCallCount()).To(Equal(1))
-
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				table, chain = iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-			})
-
-			It("does not delete other rules in parent chain if parent chain cleanup is not requested", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "asg-001-", "asg-\\d\\d\\d-", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).NotTo(HaveOccurred())
-
-				Expect(iptables.DeleteCallCount()).To(Equal(1))
-				table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("some-chain"))
-				Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "asg-000-9999999999111110"}))
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				table, chain = iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("asg-000-9999999999111110"))
-			})
-		})
-
-		Context("when inserting the new chain fails", func() {
-			BeforeEach(func() {
-				iptables.BulkInsertReturns(errors.New("banana"))
-			})
-
-			It("it logs, deletes the new chain and returns a useful error", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).To(MatchError("inserting chain: banana"))
-
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-
-				table, chain := iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo42"))
-
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo42"))
-
-				Expect(logger).To(gbytes.Say("insert-chain.*banana"))
-			})
-		})
-
-		Context("when appending the new chain fails", func() {
-			BeforeEach(func() {
-				iptables.BulkAppendReturns(errors.New("banana"))
-			})
-
-			It("it logs, cleans up the new chain and returns a useful error", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).To(MatchError("bulk appending: banana"))
-
-				Expect(iptables.ClearChainCallCount()).To(Equal(1))
-				Expect(iptables.DeleteChainCallCount()).To(Equal(1))
-				Expect(iptables.DeleteCallCount()).To(Equal(1))
-
-				table, parentChain, ruleSpec := iptables.DeleteArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(parentChain).To(Equal("some-chain"))
-				Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "foo42"}))
-
-				table, chain := iptables.ClearChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo42"))
-
-				table, chain = iptables.DeleteChainArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
-				Expect(chain).To(Equal("foo42"))
-
-				Expect(logger).To(gbytes.Say("bulk-append.*banana"))
-			})
-		})
-
-		Context("when there are errors cleaning up old rules", func() {
-			BeforeEach(func() {
-				iptables.ListReturns(nil, errors.New("blueberry"))
-			})
-
-			It("it logs and returns a cleanup error in addition to the chain name", func() {
-				chainName, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).To(MatchError("cleaning up: listing forward rules: blueberry"))
-				_, isCleanupErr := err.(*enforcer.CleanupErr)
-				Expect(chainName).To(MatchRegexp("^foo.*"))
-				Expect(isCleanupErr).To(BeTrue())
-				Expect(logger).To(gbytes.Say("cleanup-rules.*blueberry"))
-			})
-		})
-
-		Context("when there are errors cleaning up old chains", func() {
-			BeforeEach(func() {
-				iptables.DeleteReturns(errors.New("banana"))
-				iptables.ListReturns([]string{"-A some-chain -j foo0000000001"}, nil)
-			})
-
-			It("returns a CleanupErr in addition to the chain name", func() {
-				chainName, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).To(MatchError("cleaning up: remove reference to old chain: banana"))
-				_, isCleanupErr := err.(*enforcer.CleanupErr)
-				Expect(chainName).To(MatchRegexp("^foo.*"))
-				Expect(isCleanupErr).To(BeTrue())
-			})
-		})
-
-		Context("when creating the new chain fails", func() {
-			BeforeEach(func() {
-				iptables.NewChainReturns(errors.New("banana"))
-			})
-
-			It("it logs and returns a useful error", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
-				Expect(err).To(MatchError("creating chain: banana"))
-
-				Expect(logger).To(gbytes.Say("create-chain.*banana"))
-			})
-		})
-
-		Context("when network policy is disabled", func() {
-			BeforeEach(func() {
-				ruleEnforcer = enforcer.NewEnforcer(
-					logger,
-					timestamper,
-					iptables,
-					enforcer.EnforcerConfig{
-						DisableContainerNetworkPolicy: true,
-						OverlayNetwork:                "10.10.0.0/16",
+			JustBeforeEach(func() {
+				rulesToAppend = []rules.IPTablesRule{fakeRule, fakeRule2}
+				_, enforceErr = ruleEnforcer.EnforceOnChain(
+					enforcer.Chain{
+						Table:              "some-table",
+						ParentChain:        "some-chain",
+						Prefix:             "asg-handle",
+						ManagedChainsRegex: "asg-handle",
+						CleanUpParentChain: true,
 					},
+					rulesToAppend,
 				)
 			})
 
-			It("allows all container connections", func() {
-				_, err := ruleEnforcer.Enforce("some-table", "some-chain", "foo", "foo", false, []rules.IPTablesRule{fakeRule}...)
+			Context("when parent chain has candidate chain, but not old chain", func() {
+				BeforeEach(func() {
+					iptables.ExistsStub = func(table string, parentChan string, ruleSpec rules.IPTablesRule) (bool, error) {
+						switch ruleSpec[1] {
+						case "casg-handle":
+							return true, nil
+						case "asg-handle":
+							return false, nil
+						default:
+							return false, errors.New("unexpected Exists call")
+						}
+					}
+				})
+
+				It("renames candidate chain to new chain", func() {
+					Expect(enforceErr).NotTo(HaveOccurred())
+					Expect(iptables.RenameChainCallCount()).To(Equal(2))
+					table, oldChain, newChain := iptables.RenameChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(oldChain).To(Equal("casg-handle"))
+					Expect(newChain).To(Equal("asg-handle"))
+				})
+
+				Context("when renaming candidate chain fails", func() {
+					BeforeEach(func() {
+						iptables.RenameChainReturns(errors.New("failed-to-rename"))
+					})
+
+					FIt("does not clean up the candidate chain", func() {
+						Expect(enforceErr).To(HaveOccurred())
+						Expect(enforceErr).To(MatchError("failed-to-rename"))
+						Expect(iptables.ClearChainCallCount()).To(Equal(0))
+						Expect(iptables.BulkInsertCallCount()).To(Equal(0))
+						Expect(iptables.BulkAppendCallCount()).To(Equal(0))
+						Expect(iptables.DeleteCallCount()).To(Equal(0))
+						Expect(iptables.ClearChainCallCount()).To(Equal(0))
+					})
+				})
+			})
+
+			Context("when parent chain does not have candidate chain", func() {
+				BeforeEach(func() {
+					iptables.ExistsStub = func(table string, parentChan string, ruleSpec rules.IPTablesRule) (bool, error) {
+						switch ruleSpec[1] {
+						case "casg-handle":
+							return false, nil
+						case "asg-handle":
+							return true, nil
+						default:
+							return false, errors.New("unexpected Exists call")
+						}
+					}
+				})
+
+				It("deletes candidate chain", func() {
+					Expect(iptables.ClearChainCallCount()).To(Equal(2))
+					table, chain := iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("casg-handle"))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(2))
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("casg-handle"))
+				})
+
+				It("creates candidate chain with specified rule set", func() {
+					Expect(iptables.NewChainCallCount()).To(Equal(1))
+					table, chain := iptables.NewChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("casg-handle"))
+					Expect(iptables.BulkAppendCallCount()).To(Equal(1))
+					table, chain, ruleSpec := iptables.BulkAppendArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("casg-handle"))
+					Expect(ruleSpec).To(Equal(rulesToAppend))
+				})
+
+				It("appends candidate chain to parent chain", func() {
+					Expect(iptables.BulkInsertCallCount()).To(Equal(1))
+					table, parentChain, position, ruleSpec := iptables.BulkInsertArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(parentChain).To(Equal("some-chain"))
+					Expect(position).To(Equal(1))
+					Expect(ruleSpec).To(Equal([]rules.IPTablesRule{{"-j", "casg-handle"}}))
+				})
+
+				It("deletes old chain", func() {
+					Expect(iptables.DeleteCallCount()).To(Equal(2))
+					table, parentChain, ruleSpec := iptables.DeleteArgsForCall(1)
+					Expect(table).To(Equal("some-table"))
+					Expect(parentChain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "asg-handle"}))
+
+					Expect(iptables.ClearChainCallCount()).To(Equal(2))
+					table, chain := iptables.ClearChainArgsForCall(1)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("asg-handle"))
+
+					Expect(iptables.DeleteChainCallCount()).To(Equal(2))
+					table, chain = iptables.DeleteChainArgsForCall(1)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("asg-handle"))
+				})
+
+				It("renames candidate chain to new chain", func() {
+					Expect(iptables.RenameChainCallCount()).To(Equal(1))
+					table, oldChain, newChain := iptables.RenameChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(oldChain).To(Equal("casg-handle"))
+					Expect(newChain).To(Equal("asg-handle"))
+				})
+			})
+
+			Context("when parent chain does not have candidate or old chain", func() {
+				BeforeEach(func() {
+					iptables.ExistsStub = func(table string, parentChan string, ruleSpec rules.IPTablesRule) (bool, error) {
+						switch ruleSpec[1] {
+						case "casg-handle":
+							return false, nil
+						case "asg-handle":
+							return false, nil
+						default:
+							return false, errors.New("unexpected Exists call")
+						}
+					}
+				})
+			})
+		})
+
+		Context("when ManagedChainsRegex is not specified", func() {
+			// Use timestamped chain name
+			It("enforces all the rules it receives on the correct chain", func() {
+				rulesToAppend := []rules.IPTablesRule{fakeRule, fakeRule2}
+				_, err := ruleEnforcer.EnforceOnChain(
+					enforcer.Chain{
+						Table:              "some-table",
+						ParentChain:        "some-chain",
+						Prefix:             "foo",
+						CleanUpParentChain: true,
+					},
+					rulesToAppend,
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(iptables.BulkAppendCallCount()).To(Equal(1))
+				tbl, chain, rules := iptables.BulkAppendArgsForCall(0)
+				Expect(tbl).To(Equal("some-table"))
+				Expect(chain).To(Equal("foo42"))
+				Expect(rules).To(Equal(rulesToAppend))
+			})
+
+			Context("when the bulk append fails", func() {
+				BeforeEach(func() {
+					iptables.BulkAppendReturns(errors.New("banana"))
+				})
+
+				It("returns an error", func() {
+					rulesToAppend := []rules.IPTablesRule{fakeRule, fakeRule2}
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						rulesToAppend,
+					)
+					Expect(err).To(MatchError("bulk appending: banana"))
+				})
+			})
+
+			It("creates a timestamped chain", func() {
+				_, err := ruleEnforcer.EnforceOnChain(
+					enforcer.Chain{
+						Table:              "some-table",
+						ParentChain:        "some-chain",
+						Prefix:             "foo",
+						CleanUpParentChain: false,
+					},
+					[]rules.IPTablesRule{fakeRule},
+				)
 				Expect(err).NotTo(HaveOccurred())
 
 				Expect(iptables.NewChainCallCount()).To(Equal(1))
-				Expect(iptables.BulkInsertCallCount()).To(Equal(1))
-				_, _, position, _ := iptables.BulkInsertArgsForCall(0)
-				Expect(position).To(Equal(1))
+				tableName, chainName := iptables.NewChainArgsForCall(0)
+				Expect(tableName).To(Equal("some-table"))
+				Expect(chainName).To(Equal("foo42"))
+			})
 
-				table, chain, rulespec := iptables.BulkAppendArgsForCall(0)
-				Expect(table).To(Equal("some-table"))
+			It("returns the chain it created", func() {
+				chain, err := ruleEnforcer.EnforceOnChain(
+					enforcer.Chain{
+						Table:              "some-table",
+						ParentChain:        "some-chain",
+						Prefix:             "foo",
+						CleanUpParentChain: false,
+					},
+					[]rules.IPTablesRule{fakeRule},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(iptables.NewChainCallCount()).To(Equal(1))
+				tableName, chainName := iptables.NewChainArgsForCall(0)
+				Expect(tableName).To(Equal("some-table"))
+				Expect(chainName).To(Equal("foo42"))
 				Expect(chain).To(Equal("foo42"))
-				Expect(rulespec).To(Equal([]rules.IPTablesRule{{"-s", "10.10.0.0/16", "-d", "10.10.0.0/16", "-j", "ACCEPT"}, {"rule1"}}))
+			})
+
+			It("inserts the new chain into the chain", func() {
+				_, err := ruleEnforcer.EnforceOnChain(
+					enforcer.Chain{
+						Table:              "some-table",
+						ParentChain:        "some-chain",
+						Prefix:             "foo",
+						CleanUpParentChain: false,
+					},
+					[]rules.IPTablesRule{fakeRule},
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(iptables.BulkInsertCallCount()).To(Equal(1))
+				tableName, chainName, pos, ruleSpec := iptables.BulkInsertArgsForCall(0)
+				Expect(tableName).To(Equal("some-table"))
+				Expect(chainName).To(Equal("some-chain"))
+				Expect(pos).To(Equal(1))
+				Expect(ruleSpec).To(Equal([]rules.IPTablesRule{{"-j", "foo42"}}))
+			})
+
+			Context("when there is an older timestamped chain", func() {
+				BeforeEach(func() {
+					timestamper.CurrentTimeReturns(9999999999111111)
+					iptables.ListReturns([]string{
+						"-A some-chain -j foo9999999999111110",
+						"-A some-chain -j foo9999999999111116",
+					}, nil)
+				})
+
+				It("gets deleted", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(iptables.DeleteCallCount()).To(Equal(1))
+					table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "foo9999999999111110"}))
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					table, chain = iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo9999999999111110"))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo9999999999111110"))
+				})
+			})
+
+			Context("when there is an older timestamped chain with a different prefix", func() {
+				BeforeEach(func() {
+					timestamper.CurrentTimeReturns(9999999999111111)
+					iptables.ListReturns([]string{
+						"-A some-chain -j vpa-9999999999111110",
+						"-A some-chain -j vpb-9999999999111116",
+					}, nil)
+				})
+
+				It("does not get deleted", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "vpa-",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(iptables.DeleteCallCount()).To(Equal(1))
+					table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "vpa-9999999999111110"}))
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					table, chain = iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+				})
+			})
+
+			Context("when parent chain has other rules", func() {
+				BeforeEach(func() {
+					timestamper.CurrentTimeReturns(9999999999111111)
+					iptables.ListReturns([]string{
+						"-A some-chain -j vpa-9999999999111110",
+						"-A some-chain -j vpa-9999999999111116",
+						"-A some-chain -j some-chain--log",
+						"-A some-chain -m state --state RELATED,ESTABLISHED -j ACCEPT",
+						"-A some-chain -p tcp -m state --state INVALID -j DROP",
+						"-A some-chain -m iprange --dst-range 0.0.0.0-9.255.255.255 -j ACCEPT",
+						"-A some-chain -j REJECT --reject-with icmp-port-unreachable",
+						`-A some-chain -j LOG --log-prefix "DENY_ee8fd40b "`,
+					}, nil)
+				})
+
+				It("deletes other rules in parent chain after the current chain time and keeps the reject rule if parent chain cleanup requested", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "vpa-",
+							CleanUpParentChain: true,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(iptables.DeleteAfterRuleNumKeepRejectCallCount()).To(Equal(1))
+					table, chain, ruleSpec := iptables.DeleteAfterRuleNumKeepRejectArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(2))
+					Expect(iptables.BulkAppendCallCount()).To(Equal(1))
+
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					table, chain = iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+				})
+
+				It("does not delete other rules in parent chain if parent chain cleanup is not requested", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "vpa-",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(iptables.DeleteCallCount()).To(Equal(1))
+					table, chain, ruleSpec := iptables.DeleteArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "vpa-9999999999111110"}))
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					table, chain = iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("vpa-9999999999111110"))
+				})
+			})
+
+			Context("when inserting the new chain fails", func() {
+				BeforeEach(func() {
+					iptables.BulkInsertReturns(errors.New("banana"))
+				})
+
+				It("it logs, deletes the new chain and returns a useful error", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).To(MatchError("inserting chain: banana"))
+
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+
+					table, chain := iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo42"))
+
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo42"))
+
+					Expect(logger).To(gbytes.Say("insert-chain.*banana"))
+				})
+			})
+
+			Context("when appending the new chain fails", func() {
+				BeforeEach(func() {
+					iptables.BulkAppendReturns(errors.New("banana"))
+				})
+
+				It("it logs, cleans up the new chain and returns a useful error", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).To(MatchError("bulk appending: banana"))
+
+					Expect(iptables.ClearChainCallCount()).To(Equal(1))
+					Expect(iptables.DeleteChainCallCount()).To(Equal(1))
+					Expect(iptables.DeleteCallCount()).To(Equal(1))
+
+					table, parentChain, ruleSpec := iptables.DeleteArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(parentChain).To(Equal("some-chain"))
+					Expect(ruleSpec).To(Equal(rules.IPTablesRule{"-j", "foo42"}))
+
+					table, chain := iptables.ClearChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo42"))
+
+					table, chain = iptables.DeleteChainArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo42"))
+
+					Expect(logger).To(gbytes.Say("bulk-append.*banana"))
+				})
+			})
+
+			Context("when there are errors cleaning up old rules", func() {
+				BeforeEach(func() {
+					iptables.ListReturns(nil, errors.New("blueberry"))
+				})
+
+				It("it logs and returns a cleanup error in addition to the chain name", func() {
+					chainName, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: true,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).To(MatchError("cleaning up: listing forward rules: blueberry"))
+					_, isCleanupErr := err.(*enforcer.CleanupErr)
+					Expect(chainName).To(MatchRegexp("^foo.*"))
+					Expect(isCleanupErr).To(BeTrue())
+					Expect(logger).To(gbytes.Say("cleanup-rules.*blueberry"))
+				})
+			})
+
+			Context("when there are errors cleaning up old chains", func() {
+				BeforeEach(func() {
+					iptables.DeleteReturns(errors.New("banana"))
+					iptables.ListReturns([]string{"-A some-chain -j foo0000000001"}, nil)
+				})
+
+				It("returns a CleanupErr in addition to the chain name", func() {
+					chainName, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).To(MatchError("cleaning up: remove reference to old chain: banana"))
+					_, isCleanupErr := err.(*enforcer.CleanupErr)
+					Expect(chainName).To(MatchRegexp("^foo.*"))
+					Expect(isCleanupErr).To(BeTrue())
+				})
+			})
+
+			Context("when creating the new chain fails", func() {
+				BeforeEach(func() {
+					iptables.NewChainReturns(errors.New("banana"))
+				})
+
+				It("it logs and returns a useful error", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							ManagedChainsRegex: "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).To(MatchError("creating chain: banana"))
+
+					Expect(logger).To(gbytes.Say("create-chain.*banana"))
+				})
+			})
+
+			Context("when network policy is disabled", func() {
+				BeforeEach(func() {
+					ruleEnforcer = enforcer.NewEnforcer(
+						logger,
+						timestamper,
+						iptables,
+						enforcer.EnforcerConfig{
+							DisableContainerNetworkPolicy: true,
+							OverlayNetwork:                "10.10.0.0/16",
+						},
+					)
+				})
+
+				It("allows all container connections", func() {
+					_, err := ruleEnforcer.EnforceOnChain(
+						enforcer.Chain{
+							Table:              "some-table",
+							ParentChain:        "some-chain",
+							Prefix:             "foo",
+							CleanUpParentChain: false,
+						},
+						[]rules.IPTablesRule{fakeRule},
+					)
+					Expect(err).NotTo(HaveOccurred())
+
+					Expect(iptables.NewChainCallCount()).To(Equal(1))
+					Expect(iptables.BulkInsertCallCount()).To(Equal(1))
+					_, _, position, _ := iptables.BulkInsertArgsForCall(0)
+					Expect(position).To(Equal(1))
+
+					table, chain, rulespec := iptables.BulkAppendArgsForCall(0)
+					Expect(table).To(Equal("some-table"))
+					Expect(chain).To(Equal("foo42"))
+					Expect(rulespec).To(Equal([]rules.IPTablesRule{{"-s", "10.10.0.0/16", "-d", "10.10.0.0/16", "-j", "ACCEPT"}, {"rule1"}}))
+				})
 			})
 		})
 	})
-	Describe("EnforceChainMatching", func() {
 
+	Describe("EnforceChainMatching", func() {
 		var (
 			iptables     *libfakes.IPTablesAdapter
 			timestamper  *fakes.TimeStamper

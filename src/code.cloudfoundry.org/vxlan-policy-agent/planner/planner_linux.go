@@ -118,7 +118,7 @@ func (s ingressSlice) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-const ASGManagedChainsRegex = `asg-[a-z0-9]{6}`
+const ASGManagedChainsRegex = `asg-[a-z0-9]{6}([0-9]{10,16})`
 
 func (p *VxlanPolicyPlanner) GetPolicyRulesAndChain() (enforcer.RulesWithChain, error) {
 	allContainers, err := p.readFile()

@@ -19,6 +19,7 @@ type iptables interface {
 	NewChain(table, chain string) error
 	ClearChain(table, chain string) error
 	DeleteChain(table, chain string) error
+	RenameChain(table, oldChain, newChain string) error
 }
 
 //go:generate counterfeiter -o ../fakes/iptables_extended.go --fake-name IPTablesAdapter . IPTablesAdapter
@@ -33,6 +34,7 @@ type IPTablesAdapter interface {
 	NewChain(table, chain string) error
 	ClearChain(table, chain string) error
 	DeleteChain(table, chain string) error
+	RenameChain(table, oldChain, newChain string) error
 	BulkInsert(table, chain string, pos int, rulespec ...IPTablesRule) error
 	BulkAppend(table, chain string, rulespec ...IPTablesRule) error
 	RuleCount(table string) (int, error)
