@@ -45,6 +45,15 @@ func NewInternal(logger lager.Logger, httpClient json_client.HttpClient, baseURL
 	}
 }
 
+func (c *InternalClient) GetPoliciesLastUpdated() (int, error) {
+	var lastUpdatedTimestamp int
+	err := c.JsonClient.Do("GET", "/networking/v1/internal/policies_last_updated", nil, &lastUpdatedTimestamp, "")
+	if err != nil {
+		return 0, err
+	}
+	return lastUpdatedTimestamp, nil
+}
+
 func (c *InternalClient) GetPolicies() ([]*Policy, []*EgressPolicy, error) {
 	var policies struct {
 		Policies       []*Policy       `json:"policies"`
@@ -57,20 +66,7 @@ func (c *InternalClient) GetPolicies() ([]*Policy, []*EgressPolicy, error) {
 	return policies.Policies, policies.EgressPolicies, nil
 }
 
-<<<<<<< HEAD
-func (c *InternalClient) GetPoliciesLastUpdated() (int, error) {
-	var lastUpdatedTimestamp int
-	err := c.JsonClient.Do("GET", "/networking/v1/internal/policies_last_updated", nil, &lastUpdatedTimestamp, "")
-	if err != nil {
-		return 0, err
-	}
-	return lastUpdatedTimestamp, nil
-}
-
-func (c *InternalClient) GetPoliciesByID(ids ...string) ([]Policy, error) {
-=======
 func (c *InternalClient) GetPoliciesByID(ids ...string) ([]Policy, []EgressPolicy, error) {
->>>>>>> parent of c0544843 (Remove Dynamic Egress features in favor of Dynamic ASG feature)
 	var policies struct {
 		Policies       []Policy       `json:"policies"`
 		EgressPolicies []EgressPolicy `json:"egress_policies"`
