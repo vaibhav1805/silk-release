@@ -49,6 +49,7 @@ code.cloudfoundry.org/go-loggregator/v8
 code.cloudfoundry.org/go-loggregator/v8/rfc5424
 code.cloudfoundry.org/go-loggregator/v8/rpc/loggregator_v2
 code.cloudfoundry.org/go-loggregator/v8/runtimeemitter
+<<<<<<< HEAD
 # code.cloudfoundry.org/lager/v3 v3.0.3
 ## explicit; go 1.19
 code.cloudfoundry.org/lager/v3
@@ -60,6 +61,17 @@ code.cloudfoundry.org/lager/v3/lagertest
 ## explicit
 # code.cloudfoundry.org/policy_client v0.0.0-20240411162908-9bae979b73e0
 ## explicit; go 1.20
+=======
+# code.cloudfoundry.org/lager v2.0.0+incompatible => code.cloudfoundry.org/lager v1.1.1-0.20210513163233-569157d2803b
+## explicit; go 1.16
+code.cloudfoundry.org/lager
+code.cloudfoundry.org/lager/internal/truncate
+code.cloudfoundry.org/lager/lagerctx
+code.cloudfoundry.org/lager/lagerflags
+code.cloudfoundry.org/lager/lagertest
+# code.cloudfoundry.org/policy_client v0.0.0-20220203234022-670e720134e3
+## explicit; go 1.17
+>>>>>>> parent of c0544843 (Remove Dynamic Egress features in favor of Dynamic ASG feature)
 code.cloudfoundry.org/policy_client
 # code.cloudfoundry.org/routing-info v0.0.0-20240405184658-449674f046fa
 ## explicit
